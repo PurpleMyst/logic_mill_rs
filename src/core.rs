@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 pub const RIGHT: &str = "R";
 pub const LEFT: &str = "L";
@@ -63,12 +63,12 @@ impl LogicMill {
         blank_symbol: char,
     ) -> Result<Self, Error> {
         let mut machine = LogicMill {
-            transitions: HashMap::new(),
+            transitions: HashMap::default(),
             initial_state: initial_state.to_string(),
             halt_state: halt_state.to_string(),
             blank_symbol,
-            rule_frequency: HashMap::new(),
-            tape: HashMap::new(),
+            rule_frequency: HashMap::default(),
+            tape: HashMap::default(),
             head_position: 0,
             current_state: "".to_string(),
         };
@@ -228,7 +228,7 @@ impl LogicMill {
         &self,
         transitions_list: Vec<(String, String, String, String, String)>,
     ) -> Result<HashMap<String, HashMap<char, (String, char, MoveDirection)>>, Error> {
-        let mut transitions = HashMap::new();
+        let mut transitions = HashMap::default();
         let mut has_halt_state = false;
 
         for transition_tuple in transitions_list {
