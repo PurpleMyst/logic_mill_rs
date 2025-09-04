@@ -32,10 +32,10 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::InvalidTransition(s) => write!(f, "InvalidTransition: {}", s),
-            Error::MissingTransition(s) => write!(f, "MissingTransition: {}", s),
-            Error::InvalidSymbol(s) => write!(f, "InvalidSymbol: {}", s),
-            Error::MaxStepsReached(s) => write!(f, "MaxStepsReached: {}", s),
+            Error::InvalidTransition(s) => write!(f, "InvalidTransition: {s}"),
+            Error::MissingTransition(s) => write!(f, "MissingTransition: {s}"),
+            Error::InvalidSymbol(s) => write!(f, "InvalidSymbol: {s}"),
+            Error::MaxStepsReached(s) => write!(f, "MaxStepsReached: {s}"),
         }
     }
 }
@@ -91,12 +91,11 @@ impl LogicMill {
         machine.rule_frequency = vec![HashMap::default(); num_states];
 
         machine.initial_state = *machine.state_map.get(initial_state).ok_or_else(|| {
-            Error::InvalidTransition(format!("Initial state '{}' not found in transitions", initial_state))
+            Error::InvalidTransition(format!("Initial state '{initial_state}' not found in transitions"))
         })?;
         machine.halt_state = *machine.state_map.get(halt_state).ok_or_else(|| {
             Error::InvalidTransition(format!(
-                "Halt state '{}' not found as a destination state in transitions",
-                halt_state
+                "Halt state '{halt_state}' not found as a destination state in transitions"
             ))
         })?;
 
@@ -116,8 +115,7 @@ impl LogicMill {
         let transition = state_transitions.get(&current_symbol).ok_or_else(|| {
             let state_name = &self.state_interner[self.current_state as usize];
             Error::MissingTransition(format!(
-                "No transition for symbol '{}' in state {}",
-                current_symbol, state_name
+                "No transition for symbol '{current_symbol}' in state {state_name}"
             ))
         })?;
 
@@ -189,8 +187,8 @@ impl LogicMill {
         // OPTIMIZATION: Iterate over the Vec using enumerate to get the state ID.
         for (state_id, symbols) in self.transitions.iter().enumerate() {
             for symbol in symbols.keys() {
-                if !self.rule_frequency[state_id as usize].contains_key(symbol) {
-                    unused.push((self.state_interner[state_id as usize].clone(), *symbol));
+                if !self.rule_frequency[state_id].contains_key(symbol) {
+                    unused.push((self.state_interner[state_id].clone(), *symbol));
                 }
             }
         }
@@ -219,7 +217,7 @@ impl LogicMill {
         for steps_count in 0..max_steps {
             if self.current_state == self.halt_state {
                 if verbose {
-                    println!("HALTED after {} steps", steps_count);
+                    println!("HALTED after {steps_count} steps");
                 }
                 return Ok((self.render_tape(), steps_count));
             }
@@ -241,8 +239,7 @@ impl LogicMill {
             // NEW: Enforce the state limit.
             if id >= 1024 {
                 return Err(Error::InvalidTransition(format!(
-                    "Exceeded the maximum of 1024 unique states. State '{}' is the 1025th.",
-                    state
+                    "Exceeded the maximum of 1024 unique states. State '{state}' is the 1025th."
                 )));
             }
             self.state_interner.push(state.to_string());
@@ -258,8 +255,7 @@ impl LogicMill {
         let (current_state, current_symbol_str, new_state, new_symbol_str, move_direction_str) = transition;
         if move_direction_str != LEFT && move_direction_str != RIGHT {
             return Err(Error::InvalidTransition(format!(
-                "Invalid moveDirection: {}",
-                move_direction_str
+                "Invalid moveDirection: {move_direction_str}"
             )));
         }
         let current_symbol = current_symbol_str
@@ -268,8 +264,7 @@ impl LogicMill {
             .ok_or_else(|| Error::InvalidSymbol("Current symbol must be a single character.".to_string()))?;
         if current_symbol_str.chars().count() != 1 {
             return Err(Error::InvalidSymbol(format!(
-                "Invalid current symbol '{}'",
-                current_symbol_str
+                "Invalid current symbol '{current_symbol_str}'"
             )));
         }
         let new_symbol = new_symbol_str
@@ -277,7 +272,7 @@ impl LogicMill {
             .next()
             .ok_or_else(|| Error::InvalidSymbol("New symbol must be a single character.".to_string()))?;
         if new_symbol_str.chars().count() != 1 {
-            return Err(Error::InvalidSymbol(format!("Invalid new symbol '{}'", new_symbol_str)));
+            return Err(Error::InvalidSymbol(format!("Invalid new symbol '{new_symbol_str}'")));
         }
 
         let current_state_id = self.get_or_intern_state(current_state)?;

@@ -41,7 +41,7 @@ impl LogicMill {
     /// Run the Logic Mill with the given input string.
     ///
     /// Returns a tuple containing the final tape content and the number of steps taken.
-    #[pyo3(signature = (input_tape, max_steps = 20_00_000, *, verbose = false))]
+    #[pyo3(signature = (input_tape, max_steps = 2_000_000, *, verbose = false))]
     pub fn run(&mut self, input_tape: String, max_steps: u64, verbose: bool) -> PyResult<(String, u64)> {
         self.machine.run(input_tape, max_steps, verbose).map_err(to_py_err)
     }
@@ -77,6 +77,6 @@ fn to_py_err(err: core::Error) -> PyErr {
         core::Error::InvalidTransition(s) => InvalidTransitionError::new_err(s),
         core::Error::MissingTransition(s) => MissingTransitionError::new_err(s),
         core::Error::InvalidSymbol(s) => InvalidSymbolError::new_err(s),
-        core::Error::MaxStepsReached(n) => PyRuntimeError::new_err(format!("Maximum steps reached: {}", n)),
+        core::Error::MaxStepsReached(n) => PyRuntimeError::new_err(format!("Maximum steps reached: {n}")),
     }
 }
