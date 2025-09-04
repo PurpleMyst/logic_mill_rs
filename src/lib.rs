@@ -1,8 +1,10 @@
 pub mod core;
 
-use pyo3::create_exception;
-use pyo3::exceptions::{PyException, PyRuntimeError};
-use pyo3::prelude::*;
+use pyo3::{
+    create_exception,
+    exceptions::{PyException, PyRuntimeError},
+    prelude::*,
+};
 
 // Create custom Python exceptions that can be raised from Rust.
 create_exception!(logic_mill_rs, InvalidTransitionError, PyException);
@@ -31,13 +33,8 @@ impl LogicMill {
         halt_state: &str,
         blank_symbol: char,
     ) -> PyResult<Self> {
-        let machine = core::LogicMill::new(
-            transitions_list,
-            initial_state,
-            halt_state,
-            blank_symbol,
-        )
-        .map_err(to_py_err)?;
+        let machine =
+            core::LogicMill::new(transitions_list, initial_state, halt_state, blank_symbol).map_err(to_py_err)?;
         Ok(LogicMill { machine })
     }
 
@@ -45,15 +42,8 @@ impl LogicMill {
     ///
     /// Returns a tuple containing the final tape content and the number of steps taken.
     #[pyo3(signature = (input_tape, max_steps = 20_00_000, *, verbose = false))]
-    pub fn run(
-        &mut self,
-        input_tape: String,
-        max_steps: u64,
-        verbose: bool,
-    ) -> PyResult<(String, u64)> {
-        self.machine
-            .run(input_tape, max_steps, verbose)
-            .map_err(to_py_err)
+    pub fn run(&mut self, input_tape: String, max_steps: u64, verbose: bool) -> PyResult<(String, u64)> {
+        self.machine.run(input_tape, max_steps, verbose).map_err(to_py_err)
     }
 
     /// Return a list of unused transition rules.
@@ -64,11 +54,8 @@ impl LogicMill {
 
 /// Parses a string into a list of transition rules.
 #[pyfunction]
-pub fn parse_transition_rules(
-    transition_rules_str: String,
-) -> PyResult<Vec<(String, String, String, String, String)>> {
-    core::parse_transition_rules(&transition_rules_str)
-        .map_err(to_py_err)
+pub fn parse_transition_rules(transition_rules_str: String) -> PyResult<Vec<(String, String, String, String, String)>> {
+    core::parse_transition_rules(&transition_rules_str).map_err(to_py_err)
 }
 
 /// A Python module implemented in Rust.
@@ -76,7 +63,7 @@ pub fn parse_transition_rules(
 fn logic_mill_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<LogicMill>()?;
     m.add_function(wrap_pyfunction!(parse_transition_rules, m)?)?;
-    
+
     m.add("InvalidTransitionError", m.py().get_type::<InvalidTransitionError>())?;
     m.add("MissingTransitionError", m.py().get_type::<MissingTransitionError>())?;
     m.add("InvalidSymbolError", m.py().get_type::<InvalidSymbolError>())?;
