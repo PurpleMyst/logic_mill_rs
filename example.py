@@ -1,4 +1,5 @@
 import time
+import pickle
 from logic_mill_rs import (
     LogicMill,
     parse_transition_rules,
@@ -29,6 +30,9 @@ def main():
 
         print("\n--- Initializing Logic Mill ---")
         tm = LogicMill(transitions)
+        p = pickle.dumps(tm)
+        print("LogicMill serialized: ", p)
+        tm = pickle.loads(p)
         print("LogicMill initialized.")
 
         input_tape = "11_111"  # Represents 2 + 3

@@ -4,7 +4,7 @@ use pyo3::{
     create_exception,
     exceptions::{PyException, PyRuntimeError},
     prelude::*,
-    types::PyBytes,
+    types::{PyBytes, PyTuple},
 };
 
 // Create custom Python exceptions that can be raised from Rust.
@@ -13,7 +13,7 @@ create_exception!(logic_mill_rs, MissingTransitionError, PyException);
 create_exception!(logic_mill_rs, InvalidSymbolError, PyException);
 
 /// A high-performance Turing machine implementation in Rust.
-#[pyclass(name = "LogicMill")]
+#[pyclass(module = "logic_mill_rs")]
 pub struct LogicMill {
     machine: core::LogicMill,
 }
@@ -57,16 +57,36 @@ impl LogicMill {
         Ok(self.machine.state_count())
     }
 
+    /// Serialize the Logic Mill state for pickling.
     fn __getstate__(&self, py: Python<'_>) -> PyResult<Py<PyBytes>> {
         let serialized = serde_pickle::to_vec(&self.machine, serde_pickle::SerOptions::new())
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(PyBytes::new(py, &serialized).into())
     }
 
+    /// Deserialize the Logic Mill state from pickled data.
     fn __setstate__(&mut self, bytes: &[u8]) -> PyResult<()> {
         self.machine = serde_pickle::from_slice(bytes, serde_pickle::DeOptions::new())
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(())
+    }
+
+    /// Support for the pickle protocol; this is necessary (i.e. the __getstate__ and __setstate__
+    /// methods alone are not enough) because our __init__ method takes arguments.
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, Py<PyTuple>, Py<PyBytes>)> {
+        let cls = py.get_type::<LogicMill>();
+        // Dummy args just to get past __init__; the actual state is in the third element returned.
+        let args = PyTuple::new(
+            py,
+            [[(
+                "INIT".to_string(),
+                "_".to_string(),
+                "HALT".to_string(),
+                "_".to_string(),
+                "R".to_string(),
+            )]],
+        )?;
+        Ok((cls.into(), args.into(), self.__getstate__(py)?))
     }
 }
 
