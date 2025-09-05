@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 pyo3 = { version = "0.26", features = ["extension-module"] }
 rustc-hash = "2.1.1"
+slab = "0.4.11"
 
 [dev-dependencies]
 criterion = "0.7.0"

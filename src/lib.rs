@@ -50,6 +50,11 @@ impl LogicMill {
     fn unused_rules(&self) -> PyResult<Vec<(String, char)>> {
         Ok(self.machine.unused_rules())
     }
+
+    /// Return the number of states in the Logic Mill.
+    fn state_count(&self) -> PyResult<usize> {
+        Ok(self.machine.state_count())
+    }
 }
 
 /// Parses a string into a list of transition rules.
