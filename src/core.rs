@@ -59,6 +59,7 @@ const INITIAL_STATE_ID: StateId = 1;
 const HALT_STATE_ID: StateId = 0;
 
 /// A high-performance Turing machine implementation in Rust.
+#[derive(Debug)]
 pub struct LogicMill {
     /// Transition matrix:
     /// [current_state][current_symbol] -> (new_state, new_symbol, move_direction)
@@ -175,6 +176,7 @@ impl LogicMill {
             .copied()
             .flatten()
             .ok_or_else(|| {
+                let current_symbol = self.symbol_interner[current_symbol as usize];
                 let state_name = &self.state_interner[self.current_state as usize];
                 Error::MissingTransition(format!(
                     "No transition for symbol '{current_symbol}' in state {state_name}"
@@ -261,7 +263,7 @@ impl LogicMill {
         let mut unused = Vec::new();
         for (state_id, symbols) in self.transitions.iter().enumerate() {
             for &(_, symbol, _) in symbols.iter().flatten() {
-                if !self.rules_used[state_id][symbol as usize] {
+                if let Some(&used) = self.rules_used[state_id].get(symbol as usize) && !used {
                     unused.push((
                         self.state_interner[state_id].clone(),
                         self.symbol_interner[symbol as usize],
@@ -564,4 +566,40 @@ mod tests {
             )
         );
     }
+
+#[test]
+fn test_unused_rules() {
+    let transitions = vec![
+        (
+            "INIT".to_string(),
+            "a".to_string(),
+            "STATE1".to_string(),
+            "b".to_string(),
+            "R".to_string(),
+        ),
+        (
+            "STATE1".to_string(),
+            "a".to_string(),
+            "HALT".to_string(),
+            "c".to_string(),
+            "R".to_string(),
+        ),
+        (
+            "STATE1".to_string(),
+            "c".to_string(),
+            "HALT".to_string(),
+            "d".to_string(),
+            "R".to_string(),
+        ),
+    ];
+    let mut machine = LogicMill::new(transitions, "INIT", "HALT", '_').unwrap();
+    eprintln!("{machine:?}");
+    let (output_tape, steps) = machine.run("aa".to_string(), 100, false).unwrap();
+    assert_eq!(output_tape, "bc");
+    assert_eq!(steps, 2);
+
+    let unused = machine.unused_rules();
+    assert_eq!(unused.len(), 1);
+    assert_eq!(unused[0], ("STATE1".to_string(), 'c'));
+}
 }
