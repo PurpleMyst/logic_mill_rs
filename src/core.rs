@@ -22,7 +22,7 @@ impl<'a> From<&'a str> for MoveDirection {
 }
 
 /// Custom error type for the Turing machine.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Error {
     /// An invalid transition was encountered.
     InvalidTransition(String),
@@ -167,9 +167,10 @@ impl LogicMill {
             (idx, self.right_tape[idx])
         };
 
-        // OPTIMIZATION: Direct slice indexing. This is faster than any hash map lookup.
-        // It's safe because all state IDs are guaranteed to be valid indices.
-        let state_transitions = &self.transitions[self.current_state as usize];
+        let state_transitions = self.transitions.get(self.current_state as usize).ok_or_else(|| {
+            let state_name = &self.state_interner[self.current_state as usize];
+            Error::MissingTransition(format!("No transitions for state {state_name}"))
+        })?;
 
         let transition = state_transitions
             .get(current_symbol as usize)
@@ -1713,5 +1714,15 @@ NEXT | NEXT | L
             machine.run(roman, 20_000_000, false).unwrap();
         }
         assert_eq!(machine.unused_rules(), Vec::new());
+    }
+
+    #[test]
+    fn test_state_without_rules() {
+        let rules = include_str!("testcase_rules/unhandled_symbol.txt");
+        let mut machine = LogicMill::new(parse_transition_rules(rules).unwrap(), "INIT", "HALT", '_').unwrap();
+        assert_eq!(
+            machine.run("I".to_string(), 10, false),
+            Err(Error::MissingTransition("No transitions for state SAW_1".to_string()))
+        );
     }
 }
