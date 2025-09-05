@@ -4,6 +4,7 @@ use pyo3::{
     create_exception,
     exceptions::{PyException, PyRuntimeError},
     prelude::*,
+    types::PyBytes,
 };
 
 // Create custom Python exceptions that can be raised from Rust.
@@ -54,6 +55,18 @@ impl LogicMill {
     /// Return the number of states in the Logic Mill.
     fn state_count(&self) -> PyResult<usize> {
         Ok(self.machine.state_count())
+    }
+
+    fn __getstate__(&self, py: Python<'_>) -> PyResult<Py<PyBytes>> {
+        let serialized = serde_pickle::to_vec(&self.machine, serde_pickle::SerOptions::new())
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok(PyBytes::new(py, &serialized).into())
+    }
+
+    fn __setstate__(&mut self, bytes: &[u8]) -> PyResult<()> {
+        self.machine = serde_pickle::from_slice(bytes, serde_pickle::DeOptions::new())
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok(())
     }
 }
 

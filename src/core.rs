@@ -5,7 +5,7 @@ pub const LEFT: &str = "L";
 
 pub type Transition = (String, String, String, String, String);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MoveDirection {
     Left,
     Right,
@@ -59,7 +59,7 @@ const INITIAL_STATE_ID: StateId = 1;
 const HALT_STATE_ID: StateId = 0;
 
 /// A high-performance Turing machine implementation in Rust.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct LogicMill {
     /// Transition matrix:
     /// [current_state][current_symbol] -> (new_state, new_symbol, move_direction)
