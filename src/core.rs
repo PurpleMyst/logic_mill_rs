@@ -1,4 +1,5 @@
 use slab::Slab;
+use rustc_hash::FxHashMap as HashMap;
 
 pub const RIGHT: &str = "R";
 pub const LEFT: &str = "L";
@@ -80,11 +81,17 @@ pub struct LogicMill {
     /// The current state ID.
     current_state: StateId,
 
-    /// Slab that allows mapping state names to IDs and vice versa.
+    /// Slab that allows mapping state IDs to names.
     state_interner: Slab<String>,
+
+    /// Map for reverse lookup of state names to IDs.
+    state_map: HashMap<String, StateId>,
 
     /// Slab that allows mapping symbols to IDs and vice versa.
     symbol_interner: Slab<char>,
+
+    /// Map for reverse lookup of symbols to IDs.
+    symbol_map: HashMap<char, SymbolId>,
 }
 
 impl LogicMill {
@@ -110,11 +117,22 @@ impl LogicMill {
                 assert_eq!(initial_state_id, INITIAL_STATE_ID);
                 slab
             },
+            state_map: {
+                let mut map = HashMap::default();
+                map.insert(halt_state.to_string(), HALT_STATE_ID);
+                map.insert(initial_state.to_string(), INITIAL_STATE_ID);
+                map
+            },
             symbol_interner: {
                 let mut slab = Slab::new();
                 let blank_symbol_id = slab.insert(blank_symbol) as SymbolId;
                 assert_eq!(blank_symbol_id, BLANK_SYMBOL_ID);
                 slab
+            },
+            symbol_map: {
+                let mut map = HashMap::default();
+                map.insert(blank_symbol, BLANK_SYMBOL_ID);
+                map
             },
         };
 
@@ -326,8 +344,8 @@ impl LogicMill {
 
     /// Intern a state name, returning its ID. If the state is new, it is added to the interner.
     fn get_or_intern_state(&mut self, state: &str) -> Result<StateId, Error> {
-        if let Some((id, _)) = self.state_interner.iter().find(|&(_, s)| s == state) {
-            Ok(id as StateId)
+        if let Some(&id) = self.state_map.get(state) {
+            Ok(id)
         } else {
             let id = self.state_interner.len() as u16;
             if id == 1024 {
@@ -336,18 +354,20 @@ impl LogicMill {
                 )));
             }
             self.state_interner.insert(state.to_string());
+            self.state_map.insert(state.to_string(), id);
             Ok(id)
         }
     }
 
     /// Intern a symbol, returning its ID. If the symbol is new, it is added to the interner.
     fn get_or_intern_symbol(&mut self, symbol: char) -> Result<SymbolId, Error> {
-        if let Some((id, _)) = self.symbol_interner.iter().find(|&(_, &s)| s == symbol) {
+        if let Some(&id) = self.symbol_map.get(&symbol) {
             Ok(id as SymbolId)
         } else {
             let id = u16::try_from(self.symbol_interner.len())
                 .map_err(|_| Error::InvalidSymbol("Exceeded the maximum of 65536 unique symbols.".to_string()))?;
             self.symbol_interner.insert(symbol);
+            self.symbol_map.insert(symbol, id);
             Ok(id)
         }
     }
