@@ -1,4 +1,3 @@
-use rustc_hash::FxHashMap as HashMap;
 use slab::Slab;
 
 pub const RIGHT: &str = "R";
@@ -53,7 +52,10 @@ pub struct LogicMill {
     initial_state: StateId,
     halt_state: StateId,
     rules_used: Vec<Vec<bool>>,
-    tape: HashMap<i64, SymbolId>,
+
+    right_tape: Vec<SymbolId>,
+    left_tape: Vec<SymbolId>,
+
     head_position: i64,
     current_state: StateId,
 
@@ -74,7 +76,8 @@ impl LogicMill {
             initial_state: 0,
             halt_state: 0,
             rules_used: Default::default(),
-            tape: Default::default(),
+            left_tape: Default::default(),
+            right_tape: Default::default(),
             head_position: 0,
             current_state: 0,
             state_interner: Default::default(),
@@ -126,7 +129,15 @@ impl LogicMill {
     /// Perform a single step of the Turing machine's execution.
     #[inline] // Suggest inlining this critical function.
     pub fn step(&mut self) -> Result<(), Error> {
-        let current_symbol = self.tape.get(&self.head_position).copied().unwrap_or(BLANK_SYMBOL_ID);
+        let (idx, current_symbol) = if self.right_tape.is_empty() && self.left_tape.is_empty() {
+            (0, BLANK_SYMBOL_ID)
+        } else if self.head_position < 0 {
+            let idx = (-self.head_position - 1) as usize;
+            (idx, self.left_tape[idx])
+        } else {
+            let idx = self.head_position as usize;
+            (idx, self.right_tape[idx])
+        };
 
         // OPTIMIZATION: Direct slice indexing. This is faster than any hash map lookup.
         // It's safe because all state IDs are guaranteed to be valid indices.
@@ -147,16 +158,31 @@ impl LogicMill {
 
         self.rules_used[self.current_state as usize][current_symbol as usize] = true;
 
-        if new_symbol == BLANK_SYMBOL_ID {
-            self.tape.remove(&self.head_position);
+        if self.head_position < 0 {
+            self.left_tape[idx] = new_symbol;
         } else {
-            self.tape.insert(self.head_position, new_symbol);
+            if self.right_tape.is_empty() {
+                assert_eq!(idx, 0, "Right tape is empty but idx is not 0");
+                self.right_tape.push(BLANK_SYMBOL_ID);
+            }
+            self.right_tape[idx] = new_symbol;
         }
 
         self.current_state = new_state_id;
         match move_direction {
             MoveDirection::Left => self.head_position -= 1,
             MoveDirection::Right => self.head_position += 1,
+        }
+        if self.head_position < 0 {
+            let left_idx = (-self.head_position - 1) as usize;
+            if left_idx >= self.left_tape.len() {
+                self.left_tape.push(BLANK_SYMBOL_ID);
+            }
+        } else {
+            let right_idx = self.head_position as usize;
+            if right_idx >= self.right_tape.len() {
+                self.right_tape.push(BLANK_SYMBOL_ID);
+            }
         }
 
         Ok(())
@@ -167,13 +193,11 @@ impl LogicMill {
         if input_tape.contains(' ') {
             return Err(Error::InvalidSymbol("Input tape must not contain spaces".to_string()));
         }
-        self.tape.clear();
-        for (i, symbol) in input_tape.char_indices() {
-            let symbol = self.get_or_intern_symbol(symbol)?;
-            if symbol != BLANK_SYMBOL_ID {
-                self.tape.insert(i as i64, symbol);
-            }
-        }
+        self.left_tape.clear();
+        self.right_tape = input_tape
+            .chars()
+            .map(|c| self.get_or_intern_symbol(c))
+            .collect::<Result<Vec<_>, _>>()?;
         self.head_position = 0;
         self.current_state = self.initial_state;
 
@@ -189,21 +213,19 @@ impl LogicMill {
     }
 
     pub fn render_tape(&self) -> String {
-        if self.tape.is_empty() {
+        if self.left_tape.is_empty() && self.right_tape.is_empty() {
             return String::new();
         }
-        let (min_pos, max_pos) = self
-            .tape
-            .keys()
-            .fold((i64::MAX, i64::MIN), |(min, max), &val| (min.min(val), max.max(val)));
-        if min_pos > max_pos {
-            return String::new();
+
+        let mut tape_view = String::with_capacity(self.left_tape.len() + self.right_tape.len());
+        for &symbol_id in self.left_tape.iter().rev() {
+            tape_view.push(self.symbol_interner[symbol_id as usize]);
         }
-        let tape_str: String = (min_pos..=max_pos)
-            .map(|i| self.tape.get(&i).copied().unwrap_or(BLANK_SYMBOL_ID))
-            .map(|symbol_id| self.symbol_interner[symbol_id as usize])
-            .collect();
-        tape_str
+        for &symbol_id in &self.right_tape {
+            tape_view.push(self.symbol_interner[symbol_id as usize]);
+        }
+
+        tape_view
             .trim_matches(self.symbol_interner[BLANK_SYMBOL_ID as usize])
             .to_string()
     }
@@ -227,10 +249,25 @@ impl LogicMill {
         let window = 20;
         let min_pos = self.head_position - window;
         let max_pos = self.head_position + window;
-        let tape_view: String = (min_pos..=max_pos)
-            .map(|i| self.tape.get(&i).copied().unwrap_or(BLANK_SYMBOL_ID))
-            .map(|symbol_id| self.symbol_interner[symbol_id as usize])
-            .collect();
+        let mut tape_view = String::with_capacity((max_pos - min_pos + 1) as usize);
+        for i in min_pos..=max_pos {
+            let symbol_id = if i < 0 {
+                let idx = (-i - 1) as usize;
+                if idx < self.left_tape.len() {
+                    self.left_tape[idx]
+                } else {
+                    BLANK_SYMBOL_ID
+                }
+            } else {
+                let idx = i as usize;
+                if idx < self.right_tape.len() {
+                    self.right_tape[idx]
+                } else {
+                    BLANK_SYMBOL_ID
+                }
+            };
+            tape_view.push(self.symbol_interner[symbol_id as usize]);
+        }
         println!(
             "{} \x1b[1m{}\x1b[0m",
             tape_view, self.state_interner[self.current_state as usize]
@@ -467,8 +504,7 @@ mod tests {
             "b".to_string(),
             "R".to_string(),
         )];
-        let result
-            = LogicMill::new(transitions, "INIT", "HALT", '_');
+        let result = LogicMill::new(transitions, "INIT", "HALT", '_');
         assert!(matches!(result, Err(Error::InvalidTransition(_))));
     }
 }
