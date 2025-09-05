@@ -407,7 +407,7 @@ impl LogicMill {
             if state_map.get(current_symbol as usize).copied().flatten().is_some() {
                 return Err(Error::InvalidTransition(format!(
                     "Duplicate transition for state {} and symbol {}",
-                    self.state_interner[current_state_id as usize], current_symbol
+                    self.state_interner[current_state_id as usize], self.symbol_interner[current_symbol as usize]
                 )));
             }
 
