@@ -59,7 +59,7 @@ impl LogicMill {
 
 /// Parses a string into a list of transition rules.
 #[pyfunction]
-pub fn parse_transition_rules(transition_rules_str: String) -> PyResult<Vec<(String, String, String, String, String)>> {
+pub fn parse_transition_rules(transition_rules_str: String) -> PyResult<Vec<core::Transition>> {
     core::parse_transition_rules(&transition_rules_str).map_err(to_py_err)
 }
 
@@ -82,6 +82,6 @@ fn to_py_err(err: core::Error) -> PyErr {
         core::Error::InvalidTransition(s) => InvalidTransitionError::new_err(s),
         core::Error::MissingTransition(s) => MissingTransitionError::new_err(s),
         core::Error::InvalidSymbol(s) => InvalidSymbolError::new_err(s),
-        core::Error::MaxStepsReached(n) => PyRuntimeError::new_err(format!("Maximum steps reached: {n}")),
+        core::Error::MaxStepsReached(n) => PyRuntimeError::new_err(format!("Max steps reached: {n}")),
     }
 }

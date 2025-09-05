@@ -3,6 +3,8 @@ use slab::Slab;
 pub const RIGHT: &str = "R";
 pub const LEFT: &str = "L";
 
+pub type Transition = (String, String, String, String, String);
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MoveDirection {
     Left,
@@ -19,22 +21,29 @@ impl<'a> From<&'a str> for MoveDirection {
     }
 }
 
-// No changes to Error enum
+/// Custom error type for the Turing machine.
 #[derive(Debug)]
 pub enum Error {
+    /// An invalid transition was encountered.
     InvalidTransition(String),
+
+    /// A required transition is missing.
     MissingTransition(String),
+
+    /// An invalid symbol was encountered.
     InvalidSymbol(String),
+
+    /// The maximum number of steps has been reached.
     MaxStepsReached(u64),
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::InvalidTransition(s) => write!(f, "InvalidTransition: {s}"),
-            Error::MissingTransition(s) => write!(f, "MissingTransition: {s}"),
-            Error::InvalidSymbol(s) => write!(f, "InvalidSymbol: {s}"),
-            Error::MaxStepsReached(s) => write!(f, "MaxStepsReached: {s}"),
+            Error::InvalidTransition(s) => f.pad(s),
+            Error::MissingTransition(s) => f.pad(s),
+            Error::InvalidSymbol(s) => f.pad(s),
+            Error::MaxStepsReached(n) => write!(f, "Max steps reached: {n}"),
         }
     }
 }
@@ -46,81 +55,99 @@ type SymbolId = u16;
 
 const BLANK_SYMBOL_ID: SymbolId = 0;
 
+const INITIAL_STATE_ID: StateId = 1;
+const HALT_STATE_ID: StateId = 0;
+
 /// A high-performance Turing machine implementation in Rust.
 pub struct LogicMill {
+    /// Transition matrix:
+    /// [current_state][current_symbol] -> (new_state, new_symbol, move_direction)
     transitions: Vec<Vec<Option<(StateId, SymbolId, MoveDirection)>>>,
-    initial_state: StateId,
-    halt_state: StateId,
+
+    /// Tracks which rules have been used: [state_id][symbol_id] -> bool
     rules_used: Vec<Vec<bool>>,
 
+    /// The tape is represented as two vectors for left and right of the head. The head position is
+    /// an index into these vectors; negative for left, non-negative for right. The left tape is
+    /// reversed to allow for efficient growth.
     right_tape: Vec<SymbolId>,
     left_tape: Vec<SymbolId>,
 
+    /// The current head position on the tape.
     head_position: i64,
+
+    /// The current state ID.
     current_state: StateId,
 
+    /// Slab that allows mapping state names to IDs and vice versa.
     state_interner: Slab<String>,
+
+    /// Slab that allows mapping symbols to IDs and vice versa.
     symbol_interner: Slab<char>,
 }
 
 impl LogicMill {
     /// Initialize the Turing Machine.
     pub fn new(
-        transitions_list: Vec<(String, String, String, String, String)>,
+        transitions_list: Vec<Transition>,
         initial_state: &str,
         halt_state: &str,
         blank_symbol: char,
     ) -> Result<Self, Error> {
         let mut machine = Self {
             transitions: Default::default(),
-            initial_state: 0,
-            halt_state: 0,
             rules_used: Default::default(),
             left_tape: Default::default(),
             right_tape: Default::default(),
             head_position: 0,
             current_state: 0,
-            state_interner: Default::default(),
+            state_interner: {
+                let mut slab = Slab::new();
+                let halt_state_id = slab.insert(halt_state.to_string()) as StateId;
+                assert_eq!(halt_state_id, HALT_STATE_ID);
+                let initial_state_id = slab.insert(initial_state.to_string()) as StateId;
+                assert_eq!(initial_state_id, INITIAL_STATE_ID);
+                slab
+            },
             symbol_interner: {
                 let mut slab = Slab::new();
-                // Reserve ID 0 for the blank symbol
                 let blank_symbol_id = slab.insert(blank_symbol) as SymbolId;
-                debug_assert_eq!(blank_symbol_id, BLANK_SYMBOL_ID);
+                assert_eq!(blank_symbol_id, BLANK_SYMBOL_ID);
                 slab
             },
         };
 
         machine.parse_transitions_list(transitions_list)?;
 
-        // let num_states = machine.state_interner.len();
-        // machine.rules_used = vec![Default::default(); num_states];
         machine.rules_used = vec![Vec::new(); machine.state_interner.len()];
         for (state_id, symbols) in machine.transitions.iter().enumerate() {
             machine.rules_used[state_id].resize(symbols.len(), false);
         }
 
-        machine.initial_state = machine
-            .state_interner
+        if !machine.transitions[INITIAL_STATE_ID as usize]
             .iter()
-            .find_map(|(id, name)| {
-                if name == initial_state {
-                    Some(id as StateId)
-                } else {
-                    None
+            .flatten()
+            .any(|_| true)
+        {
+            return Err(Error::InvalidTransition(format!(
+                "Initial state {initial_state} not found in the transitions"
+            )));
+        }
+
+        let mut found_halt = false;
+        for transition_map in &machine.transitions {
+            for new_state in transition_map.iter().flatten().map(|(s, _, _)| *s) {
+                if new_state == HALT_STATE_ID {
+                    found_halt = true;
+                    break;
                 }
-            })
-            .ok_or_else(|| {
-                Error::InvalidTransition(format!("Initial state '{initial_state}' not found in transitions"))
-            })?;
-        machine.halt_state = machine
-            .state_interner
-            .iter()
-            .find_map(|(id, name)| if name == halt_state { Some(id as StateId) } else { None })
-            .ok_or_else(|| {
-                Error::InvalidTransition(format!(
-                    "Halt state '{halt_state}' not found as a destination state in transitions"
-                ))
-            })?;
+            }
+        }
+        if !found_halt {
+            return Err(Error::InvalidTransition(format!(
+                "Halt state {halt_state} not found in the transitions"
+            )));
+        }
 
         machine.set_tape("")?;
         Ok(machine)
@@ -199,10 +226,10 @@ impl LogicMill {
             .map(|c| self.get_or_intern_symbol(c))
             .collect::<Result<Vec<_>, _>>()?;
         self.head_position = 0;
-        self.current_state = self.initial_state;
+        self.current_state = INITIAL_STATE_ID;
 
         for freq_map in &mut self.rules_used {
-            freq_map.iter_mut().for_each(|b| *b = false);
+            freq_map.fill(false);
         }
         Ok(())
     }
@@ -281,7 +308,7 @@ impl LogicMill {
             self.print_tape();
         }
         for steps_count in 0..max_steps {
-            if self.current_state == self.halt_state {
+            if self.current_state == HALT_STATE_ID {
                 if verbose {
                     println!("HALTED after {steps_count} steps");
                 }
@@ -295,19 +322,23 @@ impl LogicMill {
         Err(Error::MaxStepsReached(max_steps))
     }
 
-    // --- Private Helper Methods ---
-
+    /// Intern a state name, returning its ID. If the state is new, it is added to the interner.
     fn get_or_intern_state(&mut self, state: &str) -> Result<StateId, Error> {
         if let Some((id, _)) = self.state_interner.iter().find(|&(_, s)| s == state) {
             Ok(id as StateId)
         } else {
-            let id = u16::try_from(self.state_interner.len())
-                .map_err(|_| Error::InvalidTransition("Exceeded the maximum of 65536 unique states.".to_string()))?;
+            let id = self.state_interner.len() as u16;
+            if id == 1024 {
+                return Err(Error::InvalidTransition(format!(
+                    "Too many states: {id}. Maximum is 1024."
+                )));
+            }
             self.state_interner.insert(state.to_string());
             Ok(id)
         }
     }
 
+    /// Intern a symbol, returning its ID. If the symbol is new, it is added to the interner.
     fn get_or_intern_symbol(&mut self, symbol: char) -> Result<SymbolId, Error> {
         if let Some((id, _)) = self.symbol_interner.iter().find(|&(_, &s)| s == symbol) {
             Ok(id as SymbolId)
@@ -319,9 +350,10 @@ impl LogicMill {
         }
     }
 
+    /// Validate and parse a single transition tuple.
     fn validate_and_parse_transition(
         &mut self,
-        transition: &(String, String, String, String, String),
+        transition: &Transition,
     ) -> Result<(StateId, SymbolId, StateId, SymbolId, MoveDirection), Error> {
         let (current_state, current_symbol_str, new_state, new_symbol_str, move_direction_str) = transition;
         if move_direction_str != LEFT && move_direction_str != RIGHT {
@@ -360,10 +392,8 @@ impl LogicMill {
         ))
     }
 
-    fn parse_transitions_list(
-        &mut self,
-        transitions_list: Vec<(String, String, String, String, String)>,
-    ) -> Result<(), Error> {
+    /// Parse and validate a list of transitions, populating the transition matrix.
+    fn parse_transitions_list(&mut self, transitions_list: Vec<Transition>) -> Result<(), Error> {
         for transition_tuple in transitions_list {
             let (current_state_id, current_symbol, new_state_id, new_symbol, move_direction) =
                 self.validate_and_parse_transition(&transition_tuple)?;
@@ -390,17 +420,12 @@ impl LogicMill {
     }
 }
 
-// No changes to parse_transition_rules
-pub fn parse_transition_rules(
-    transition_rules_str: &str,
-) -> Result<Vec<(String, String, String, String, String)>, Error> {
+/// Parses a string into a list of transition rules.
+pub fn parse_transition_rules(transition_rules_str: &str) -> Result<Vec<Transition>, Error> {
     const COMMENT_PREFIX: &str = "//";
     let mut transitions_list = Vec::new();
     for raw_line in transition_rules_str.lines() {
         let line = raw_line.trim();
-        if line.is_empty() || line.starts_with(COMMENT_PREFIX) {
-            continue;
-        }
         let line_without_comment = line.split(COMMENT_PREFIX).next().unwrap_or("").trim();
         let values: Vec<&str> = line_without_comment.split_whitespace().collect();
         if values.len() == 5 {
@@ -506,5 +531,37 @@ mod tests {
         )];
         let result = LogicMill::new(transitions, "INIT", "HALT", '_');
         assert!(matches!(result, Err(Error::InvalidTransition(_))));
+    }
+
+    #[test]
+    fn test_comments_in_transition_rules() {
+        let rules_str = r#"
+            // This is a comment
+            INIT a HALT b R  // Another comment
+            INIT b INIT a L
+            // One more comment
+        "#;
+        let transitions = parse_transition_rules(rules_str).unwrap();
+        assert_eq!(transitions.len(), 2);
+        assert_eq!(
+            transitions[0],
+            (
+                "INIT".to_string(),
+                "a".to_string(),
+                "HALT".to_string(),
+                "b".to_string(),
+                "R".to_string()
+            )
+        );
+        assert_eq!(
+            transitions[1],
+            (
+                "INIT".to_string(),
+                "b".to_string(),
+                "INIT".to_string(),
+                "a".to_string(),
+                "L".to_string()
+            )
+        );
     }
 }
