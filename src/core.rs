@@ -90,7 +90,7 @@ pub struct LogicMill {
 impl LogicMill {
     /// Initialize the Turing Machine.
     pub fn new(
-        transitions_list: Vec<Transition>,
+        transitions_list: &[Transition],
         initial_state: &str,
         halt_state: &str,
         blank_symbol: char,
@@ -395,7 +395,7 @@ impl LogicMill {
     }
 
     /// Parse and validate a list of transitions, populating the transition matrix.
-    fn parse_transitions_list(&mut self, transitions_list: Vec<Transition>) -> Result<(), Error> {
+    fn parse_transitions_list(&mut self, transitions_list: &[Transition]) -> Result<(), Error> {
         for transition_tuple in transitions_list {
             let (current_state_id, current_symbol, new_state_id, new_symbol, move_direction) =
                 self.validate_and_parse_transition(&transition_tuple)?;
@@ -461,7 +461,7 @@ mod tests {
             "b".to_string(),
             "R".to_string(),
         )];
-        let mut machine = LogicMill::new(transitions, "INIT", "HALT", '_').unwrap();
+        let mut machine = LogicMill::new(&transitions, "INIT", "HALT", '_').unwrap();
         let result = machine.run("x".to_string(), 100, false);
         assert!(matches!(result, Err(Error::MissingTransition(_))));
     }
@@ -502,7 +502,7 @@ mod tests {
         for n in 0..50 {
             let input_tape = "|".repeat(n);
             let expected_output = if n % 2 == 0 { "E" } else { "O" };
-            let mut machine = LogicMill::new(transitions.clone(), "INIT", "HALT", '_').unwrap();
+            let mut machine = LogicMill::new(&transitions, "INIT", "HALT", '_').unwrap();
             let (output_tape, steps) = machine.run(input_tape, 1000, false).unwrap();
             assert_eq!(output_tape, expected_output);
             assert!(steps > 0);
@@ -518,10 +518,10 @@ mod tests {
             "b".to_string(),
             "R".to_string(),
         )];
-        let result = LogicMill::new(transitions, "INIT", "HALT", '_');
+        let result = LogicMill::new(&transitions, "INIT", "HALT", '_');
         assert!(matches!(result, Err(Error::InvalidTransition(_))));
 
-        let result = LogicMill::new(vec![], "INIT", "HALT", '_');
+        let result = LogicMill::new(&[], "INIT", "HALT", '_');
         assert!(matches!(result, Err(Error::InvalidTransition(_))));
     }
 
@@ -534,10 +534,10 @@ mod tests {
             "b".to_string(),
             "R".to_string(),
         )];
-        let result = LogicMill::new(transitions, "INIT", "HALT", '_');
+        let result = LogicMill::new(&transitions, "INIT", "HALT", '_');
         assert!(matches!(result, Err(Error::InvalidTransition(_))));
 
-        let result = LogicMill::new(vec![], "INIT", "HALT", '_');
+        let result = LogicMill::new(&[], "INIT", "HALT", '_');
         assert!(matches!(result, Err(Error::InvalidTransition(_))));
     }
 
@@ -598,7 +598,7 @@ mod tests {
                 "R".to_string(),
             ),
         ];
-        let mut machine = LogicMill::new(transitions, "INIT", "HALT", '_').unwrap();
+        let mut machine = LogicMill::new(&transitions, "INIT", "HALT", '_').unwrap();
         eprintln!("{machine:?}");
         let (output_tape, steps) = machine.run("aa_".to_string(), 100, false).unwrap();
         assert_eq!(output_tape, "bc");
@@ -1704,7 +1704,7 @@ NEXT X NEXT X L
 NEXT _ INIT _ R
 NEXT | NEXT | L
         "#;
-        let mut machine = LogicMill::new(parse_transition_rules(rules).unwrap(), "INIT", "HALT", '_').unwrap();
+        let mut machine = LogicMill::new(&parse_transition_rules(rules).unwrap(), "INIT", "HALT", '_').unwrap();
         eprintln!("{machine:#?}");
         for n in 1..=3999 {
             let roman = to_roman(n);
@@ -1719,7 +1719,7 @@ NEXT | NEXT | L
     #[test]
     fn test_state_without_rules() {
         let rules = include_str!("testcase_rules/unhandled_symbol.txt");
-        let mut machine = LogicMill::new(parse_transition_rules(rules).unwrap(), "INIT", "HALT", '_').unwrap();
+        let mut machine = LogicMill::new(&parse_transition_rules(rules).unwrap(), "INIT", "HALT", '_').unwrap();
         assert_eq!(
             machine.run("I".to_string(), 10, false),
             Err(Error::MissingTransition("No transitions for state SAW_1".to_string()))

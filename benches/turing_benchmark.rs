@@ -30,7 +30,40 @@ fn roman_inputs() -> impl Iterator<Item = String> {
 
 fn run_rust_benchmark(c: &mut Criterion) {
     let transitions = rust_parse_rules(include_str!("sqrt_rules.txt")).unwrap();
-    let mut tm = RustLogicMill::new(transitions, "INIT", "HALT", '_').unwrap();
+    let mut tm = RustLogicMill::new(&transitions, "INIT", "HALT", '_').unwrap();
+
+    {
+        let mut new_g = c.benchmark_group("rust/new");
+
+        for (name, input) in [
+            ("sqrt", include_str!("sqrt_rules.txt")),
+            ("roman", include_str!("roman_rules.txt")),
+        ] {
+            let transitions = rust_parse_rules(input).unwrap();
+            new_g.throughput(Throughput::Elements(transitions.len() as u64));
+            new_g.bench_with_input(BenchmarkId::from_parameter(name), &transitions, |b, transitions| {
+                b.iter(|| {
+                    let tm = RustLogicMill::new(transitions, "INIT", "HALT", '_').unwrap();
+                    black_box(tm);
+                })
+            });
+        }
+    }
+    {
+        let mut parse_g = c.benchmark_group("rust/parse");
+        for (name, input) in [
+            ("sqrt", include_str!("sqrt_rules.txt")),
+            ("roman", include_str!("roman_rules.txt")),
+        ] {
+            parse_g.throughput(Throughput::Elements(input.lines().count() as u64));
+            parse_g.bench_with_input(BenchmarkId::from_parameter(name), &input, |b, input| {
+                b.iter(|| {
+                    let transitions = rust_parse_rules(black_box(input)).unwrap();
+                    black_box(transitions);
+                })
+            });
+        }
+    }
 
     {
         let mut g = c.benchmark_group("rust/sqrt");
@@ -47,7 +80,7 @@ fn run_rust_benchmark(c: &mut Criterion) {
 
     {
         let transitions = rust_parse_rules(include_str!("roman_rules.txt")).unwrap();
-        let mut tm = RustLogicMill::new(transitions, "INIT", "HALT", '_').unwrap();
+        let mut tm = RustLogicMill::new(&transitions, "INIT", "HALT", '_').unwrap();
 
         let mut g = c.benchmark_group("rust/roman");
         for input in roman_inputs() {

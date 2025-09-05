@@ -29,13 +29,13 @@ impl LogicMill {
         blank_symbol = '_'
     ))]
     pub fn new(
-        transitions_list: Vec<(String, String, String, String, String)>,
+        transitions_list: Vec<core::Transition>,
         initial_state: &str,
         halt_state: &str,
         blank_symbol: char,
     ) -> PyResult<Self> {
         let machine =
-            core::LogicMill::new(transitions_list, initial_state, halt_state, blank_symbol).map_err(to_py_err)?;
+            core::LogicMill::new(&transitions_list, initial_state, halt_state, blank_symbol).map_err(to_py_err)?;
         Ok(LogicMill { machine })
     }
 
