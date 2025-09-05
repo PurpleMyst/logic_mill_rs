@@ -3,8 +3,7 @@ use rustc_hash::FxHashMap as HashMap;
 pub const RIGHT: &str = "R";
 pub const LEFT: &str = "L";
 
-// No changes to MoveDirection
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MoveDirection {
     Left,
     Right,
@@ -42,6 +41,11 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+type StateId = u16;
+type SymbolId = u16;
+
+const BLANK_SYMBOL_ID: SymbolId = 0;
+
 /// A high-performance Turing machine implementation in Rust.
 ///
 /// ### Further Optimization Notes
@@ -49,18 +53,18 @@ impl std::error::Error for Error {}
 /// with a Vec, using the state ID as a direct index. This is the fastest possible
 /// lookup method, eliminating integer hashing and improving cache locality.
 pub struct LogicMill {
-    transitions: Vec<HashMap<char, (u16, char, MoveDirection)>>,
-    initial_state: u16,
-    halt_state: u16,
-    blank_symbol: char,
-    rule_frequency: Vec<HashMap<char, u64>>,
-    tape: HashMap<i64, char>,
+    transitions: Vec<Vec<Option<(StateId, SymbolId, MoveDirection)>>>,
+    initial_state: StateId,
+    halt_state: StateId,
+    rules_used: Vec<Vec<bool>>,
+    tape: HashMap<i64, SymbolId>,
     head_position: i64,
-    current_state: u16,
+    current_state: StateId,
 
-    // String interning structures remain essential.
     state_interner: Vec<String>,
-    state_map: HashMap<String, u16>,
+    state_map: HashMap<String, StateId>,
+    symbol_interner: Vec<char>,
+    symbol_map: HashMap<char, SymbolId>,
 }
 
 impl LogicMill {
@@ -71,24 +75,32 @@ impl LogicMill {
         halt_state: &str,
         blank_symbol: char,
     ) -> Result<Self, Error> {
-        let mut machine = LogicMill {
-            // Initialize with empty Vecs; they will be sized correctly after parsing.
-            transitions: Vec::new(),
+        let mut machine = Self {
+            transitions: Default::default(),
             initial_state: 0,
             halt_state: 0,
-            blank_symbol,
-            rule_frequency: Vec::new(),
-            tape: HashMap::default(),
+            rules_used: Default::default(),
+            tape: Default::default(),
             head_position: 0,
             current_state: 0,
-            state_interner: Vec::new(),
-            state_map: HashMap::default(),
+            state_interner: Default::default(),
+            state_map: Default::default(),
+            symbol_interner: vec![blank_symbol],
+            symbol_map: {
+                let mut map = HashMap::default();
+                map.insert(blank_symbol, 0);
+                map
+            },
         };
 
         machine.parse_transitions_list(transitions_list)?;
 
-        let num_states = machine.state_interner.len();
-        machine.rule_frequency = vec![HashMap::default(); num_states];
+        // let num_states = machine.state_interner.len();
+        // machine.rules_used = vec![Default::default(); num_states];
+        machine.rules_used = vec![Vec::new(); machine.state_interner.len()];
+        for (state_id, symbols) in machine.transitions.iter().enumerate() {
+            machine.rules_used[state_id].resize(symbols.len(), false);
+        }
 
         machine.initial_state = *machine.state_map.get(initial_state).ok_or_else(|| {
             Error::InvalidTransition(format!("Initial state '{initial_state}' not found in transitions"))
@@ -106,33 +118,34 @@ impl LogicMill {
     /// Perform a single step of the Turing machine's execution.
     #[inline] // Suggest inlining this critical function.
     pub fn step(&mut self) -> Result<(), Error> {
-        let current_symbol = self.tape.get(&self.head_position).copied().unwrap_or(self.blank_symbol);
+        let current_symbol = self.tape.get(&self.head_position).copied().unwrap_or(BLANK_SYMBOL_ID);
 
         // OPTIMIZATION: Direct slice indexing. This is faster than any hash map lookup.
         // It's safe because all state IDs are guaranteed to be valid indices.
         let state_transitions = &self.transitions[self.current_state as usize];
 
-        let transition = state_transitions.get(&current_symbol).ok_or_else(|| {
-            let state_name = &self.state_interner[self.current_state as usize];
-            Error::MissingTransition(format!(
-                "No transition for symbol '{current_symbol}' in state {state_name}"
-            ))
-        })?;
+        let transition = state_transitions
+            .get(current_symbol as usize)
+            .copied()
+            .flatten()
+            .ok_or_else(|| {
+                let state_name = &self.state_interner[self.current_state as usize];
+                Error::MissingTransition(format!(
+                    "No transition for symbol '{current_symbol}' in state {state_name}"
+                ))
+            })?;
 
         let (new_state_id, new_symbol, move_direction) = transition;
 
-        // OPTIMIZATION: Direct indexing into the outer Vec.
-        *self.rule_frequency[self.current_state as usize]
-            .entry(current_symbol)
-            .or_insert(0) += 1;
+        self.rules_used[self.current_state as usize][current_symbol as usize] = true;
 
-        if *new_symbol == self.blank_symbol {
+        if new_symbol == BLANK_SYMBOL_ID {
             self.tape.remove(&self.head_position);
         } else {
-            self.tape.insert(self.head_position, *new_symbol);
+            self.tape.insert(self.head_position, new_symbol);
         }
 
-        self.current_state = *new_state_id;
+        self.current_state = new_state_id;
         match move_direction {
             MoveDirection::Left => self.head_position -= 1,
             MoveDirection::Right => self.head_position += 1,
@@ -148,16 +161,16 @@ impl LogicMill {
         }
         self.tape.clear();
         for (i, symbol) in input_tape.char_indices() {
-            if symbol != self.blank_symbol {
+            let symbol = self.get_or_intern_symbol(symbol)?;
+            if symbol != BLANK_SYMBOL_ID {
                 self.tape.insert(i as i64, symbol);
             }
         }
         self.head_position = 0;
         self.current_state = self.initial_state;
 
-        // OPTIMIZATION: Clear all frequency counts efficiently.
-        for freq_map in &mut self.rule_frequency {
-            freq_map.clear();
+        for freq_map in &mut self.rules_used {
+            freq_map.iter_mut().for_each(|b| *b = false);
         }
         Ok(())
     }
@@ -177,18 +190,23 @@ impl LogicMill {
             return String::new();
         }
         let tape_str: String = (min_pos..=max_pos)
-            .map(|i| self.tape.get(&i).copied().unwrap_or(self.blank_symbol))
+            .map(|i| self.tape.get(&i).copied().unwrap_or(BLANK_SYMBOL_ID))
+            .map(|symbol_id| self.symbol_interner[symbol_id as usize])
             .collect();
-        tape_str.trim_matches(self.blank_symbol).to_string()
+        tape_str
+            .trim_matches(self.symbol_interner[BLANK_SYMBOL_ID as usize])
+            .to_string()
     }
 
     pub fn unused_rules(&self) -> Vec<(String, char)> {
         let mut unused = Vec::new();
-        // OPTIMIZATION: Iterate over the Vec using enumerate to get the state ID.
         for (state_id, symbols) in self.transitions.iter().enumerate() {
-            for symbol in symbols.keys() {
-                if !self.rule_frequency[state_id].contains_key(symbol) {
-                    unused.push((self.state_interner[state_id].clone(), *symbol));
+            for &(_, symbol, _) in symbols.iter().flatten() {
+                if !self.rules_used[state_id][symbol as usize] {
+                    unused.push((
+                        self.state_interner[state_id].clone(),
+                        self.symbol_interner[symbol as usize],
+                    ));
                 }
             }
         }
@@ -200,7 +218,8 @@ impl LogicMill {
         let min_pos = self.head_position - window;
         let max_pos = self.head_position + window;
         let tape_view: String = (min_pos..=max_pos)
-            .map(|i| self.tape.get(&i).copied().unwrap_or(self.blank_symbol))
+            .map(|i| self.tape.get(&i).copied().unwrap_or(BLANK_SYMBOL_ID))
+            .map(|symbol_id| self.symbol_interner[symbol_id as usize])
             .collect();
         println!(
             "{} \x1b[1m{}\x1b[0m",
@@ -231,12 +250,11 @@ impl LogicMill {
 
     // --- Private Helper Methods ---
 
-    fn get_or_intern_state(&mut self, state: &str) -> Result<u16, Error> {
-        if let Some(id) = self.state_map.get(state) {
-            Ok(*id)
+    fn get_or_intern_state(&mut self, state: &str) -> Result<StateId, Error> {
+        if let Some(&id) = self.state_map.get(state) {
+            Ok(id)
         } else {
             let id = self.state_interner.len() as u16;
-            // NEW: Enforce the state limit.
             if id >= 1024 {
                 return Err(Error::InvalidTransition(format!(
                     "Exceeded the maximum of 1024 unique states. State '{state}' is the 1025th."
@@ -244,6 +262,18 @@ impl LogicMill {
             }
             self.state_interner.push(state.to_string());
             self.state_map.insert(state.to_string(), id);
+            Ok(id)
+        }
+    }
+
+    fn get_or_intern_symbol(&mut self, symbol: char) -> Result<SymbolId, Error> {
+        if let Some(&id) = self.symbol_map.get(&symbol) {
+            Ok(id)
+        } else {
+            let id = u16::try_from(self.symbol_interner.len())
+                .map_err(|_| Error::InvalidSymbol("Exceeded the maximum of 65536 unique symbols.".to_string()))?;
+            self.symbol_interner.push(symbol);
+            self.symbol_map.insert(symbol, id);
             Ok(id)
         }
     }
@@ -292,27 +322,33 @@ impl LogicMill {
         transitions_list: Vec<(String, String, String, String, String)>,
     ) -> Result<(), Error> {
         // Use a temporary map during parsing because we don't know the final number of states yet.
-        let mut temp_transitions = HashMap::<u16, HashMap<char, (u16, char, MoveDirection)>>::default();
+        let mut temp_transitions = HashMap::<u16, Vec<Option<(StateId, SymbolId, MoveDirection)>>>::default();
 
         for transition_tuple in transitions_list {
             let (current_state_id, current_symbol, new_state_id, new_symbol, move_direction) =
                 self.validate_and_parse_transition(&transition_tuple)?;
+            let current_symbol = self.get_or_intern_symbol(current_symbol)?;
+            let new_symbol = self.get_or_intern_symbol(new_symbol)?;
 
             let state_map = temp_transitions.entry(current_state_id).or_default();
 
-            if state_map.contains_key(&current_symbol) {
+            if state_map.get(current_symbol as usize).copied().flatten().is_some() {
                 return Err(Error::InvalidTransition(format!(
                     "Duplicate transition for state {} and symbol {}",
                     self.state_interner[current_state_id as usize], current_symbol
                 )));
             }
 
-            state_map.insert(current_symbol, (new_state_id, new_symbol, move_direction));
+            // state_map.insert(current_symbol, (new_state_id, new_symbol, move_direction));
+            if (state_map.len() as u16) <= current_symbol {
+                state_map.resize((current_symbol + 1) as usize, None);
+            }
+            state_map[current_symbol as usize] = Some((new_state_id, new_symbol, move_direction));
         }
 
         // OPTIMIZATION: Convert the temporary map to the final, faster Vec structure.
         let num_states = self.state_interner.len();
-        self.transitions = vec![HashMap::default(); num_states];
+        self.transitions = vec![Default::default(); num_states];
         for (state_id, transition_map) in temp_transitions {
             self.transitions[state_id as usize] = transition_map;
         }
@@ -350,4 +386,23 @@ pub fn parse_transition_rules(
         }
     }
     Ok(transitions_list)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_totally_unknown_symbol_in_tape() {
+        let transitions = vec![(
+            "INIT".to_string(),
+            "a".to_string(),
+            "HALT".to_string(),
+            "b".to_string(),
+            "R".to_string(),
+        )];
+        let mut machine = LogicMill::new(transitions, "INIT", "HALT", '_').unwrap();
+        let result = machine.run("x".to_string(), 100, false);
+        assert!(matches!(result, Err(Error::MissingTransition(_))));
+    }
 }
