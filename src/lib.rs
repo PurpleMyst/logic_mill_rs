@@ -23,19 +23,13 @@ impl LogicMill {
     /// Initialize the Logic Mill.
     #[new]
     #[pyo3(signature = (
-        transitions_list,
+        rules,
         initial_state = "INIT",
         halt_state = "HALT",
         blank_symbol = '_'
     ))]
-    pub fn new(
-        transitions_list: Vec<core::Transition>,
-        initial_state: &str,
-        halt_state: &str,
-        blank_symbol: char,
-    ) -> PyResult<Self> {
-        let machine =
-            core::LogicMill::new(&transitions_list, initial_state, halt_state, blank_symbol).map_err(to_py_err)?;
+    pub fn new(rules: &str, initial_state: &str, halt_state: &str, blank_symbol: char) -> PyResult<Self> {
+        let machine = core::LogicMill::new(rules, initial_state, halt_state, blank_symbol).map_err(to_py_err)?;
         Ok(LogicMill { machine })
     }
 
@@ -43,7 +37,7 @@ impl LogicMill {
     ///
     /// Returns a tuple containing the final tape content and the number of steps taken.
     #[pyo3(signature = (input_tape, max_steps = 2_000_000, *, verbose = false))]
-    pub fn run(&mut self, input_tape: String, max_steps: u64, verbose: bool) -> PyResult<(String, u64)> {
+    pub fn run(&mut self, input_tape: &str, max_steps: u64, verbose: bool) -> PyResult<(String, u64)> {
         self.machine.run(input_tape, max_steps, verbose).map_err(to_py_err)
     }
 
@@ -76,31 +70,15 @@ impl LogicMill {
     fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, Py<PyTuple>, Py<PyBytes>)> {
         let cls = py.get_type::<LogicMill>();
         // Dummy args just to get past __init__; the actual state is in the third element returned.
-        let args = PyTuple::new(
-            py,
-            [[(
-                "INIT".to_string(),
-                "_".to_string(),
-                "HALT".to_string(),
-                "_".to_string(),
-                "R".to_string(),
-            )]],
-        )?;
+        let args = PyTuple::new(py, ["INIT _ HALT _ R"])?;
         Ok((cls.into(), args.into(), self.__getstate__(py)?))
     }
-}
-
-/// Parses a string into a list of transition rules.
-#[pyfunction]
-pub fn parse_transition_rules(transition_rules_str: String) -> PyResult<Vec<core::Transition>> {
-    core::parse_transition_rules(&transition_rules_str).map_err(to_py_err)
 }
 
 /// A Python module implemented in Rust.
 #[pymodule]
 fn logic_mill_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<LogicMill>()?;
-    m.add_function(wrap_pyfunction!(parse_transition_rules, m)?)?;
 
     m.add("InvalidTransitionError", m.py().get_type::<InvalidTransitionError>())?;
     m.add("MissingTransitionError", m.py().get_type::<MissingTransitionError>())?;

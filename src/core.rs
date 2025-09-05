@@ -1,10 +1,10 @@
-use slab::Slab;
 use rustc_hash::FxHashMap as HashMap;
+use slab::Slab;
 
 pub const RIGHT: &str = "R";
 pub const LEFT: &str = "L";
 
-pub type Transition = (String, String, String, String, String);
+type Transition<'a> = (&'a str, &'a str, &'a str, &'a str, &'a str);
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MoveDirection {
@@ -96,12 +96,7 @@ pub struct LogicMill {
 
 impl LogicMill {
     /// Initialize the Turing Machine.
-    pub fn new(
-        transitions_list: &[Transition],
-        initial_state: &str,
-        halt_state: &str,
-        blank_symbol: char,
-    ) -> Result<Self, Error> {
+    pub fn new(rules: &str, initial_state: &str, halt_state: &str, blank_symbol: char) -> Result<Self, Error> {
         let mut machine = Self {
             transitions: Default::default(),
             rules_used: Default::default(),
@@ -136,7 +131,7 @@ impl LogicMill {
             },
         };
 
-        machine.parse_transitions_list(transitions_list)?;
+        machine.parse_transitions(rules)?;
 
         machine.rules_used = vec![Vec::new(); machine.state_interner.len()];
         for (state_id, symbols) in machine.transitions.iter().enumerate() {
@@ -322,8 +317,8 @@ impl LogicMill {
         println!("{}^", " ".repeat(window as usize));
     }
 
-    pub fn run(&mut self, input_tape: String, max_steps: u64, verbose: bool) -> Result<(String, u64), Error> {
-        self.set_tape(&input_tape)?;
+    pub fn run(&mut self, input_tape: &str, max_steps: u64, verbose: bool) -> Result<(String, u64), Error> {
+        self.set_tape(input_tape)?;
         if verbose {
             self.print_tape();
         }
@@ -375,7 +370,7 @@ impl LogicMill {
     /// Validate and parse a single transition tuple.
     fn validate_and_parse_transition(
         &mut self,
-        transition: &Transition,
+        transition: Transition,
     ) -> Result<(StateId, SymbolId, StateId, SymbolId, MoveDirection), Error> {
         let (current_state, current_symbol_str, new_state, new_symbol_str, move_direction_str) = transition;
         if move_direction_str != LEFT && move_direction_str != RIGHT {
@@ -410,15 +405,17 @@ impl LogicMill {
             current_symbol,
             new_state_id,
             new_symbol,
-            move_direction_str.as_str().into(),
+            move_direction_str.into(),
         ))
     }
 
     /// Parse and validate a list of transitions, populating the transition matrix.
-    fn parse_transitions_list(&mut self, transitions_list: &[Transition]) -> Result<(), Error> {
-        for transition_tuple in transitions_list {
+    fn parse_transitions(&mut self, transitions_str: &str) -> Result<(), Error> {
+        for maybe_transition_tuple in parse_rules(transitions_str) {
+            let transition_tuple = maybe_transition_tuple?;
+
             let (current_state_id, current_symbol, new_state_id, new_symbol, move_direction) =
-                self.validate_and_parse_transition(&transition_tuple)?;
+                self.validate_and_parse_transition(transition_tuple)?;
 
             if self.transitions.len() <= current_state_id as usize {
                 self.transitions.resize(current_state_id as usize + 1, Vec::new());
@@ -443,29 +440,34 @@ impl LogicMill {
 }
 
 /// Parses a string into a list of transition rules.
-pub fn parse_transition_rules(transition_rules_str: &str) -> Result<Vec<Transition>, Error> {
+fn parse_rules(transition_rules_str: &str) -> impl Iterator<Item = Result<Transition<'_>, Error>> {
     const COMMENT_PREFIX: &str = "//";
-    let mut transitions_list = Vec::new();
-    for raw_line in transition_rules_str.lines() {
+    transition_rules_str.lines().map(|raw_line| {
         let line = raw_line.trim();
-        let line_without_comment = line.split(COMMENT_PREFIX).next().unwrap_or("").trim();
-        let values: Vec<&str> = line_without_comment.split_whitespace().collect();
-        if values.len() == 5 {
-            transitions_list.push((
-                values[0].to_owned(),
-                values[1].to_owned(),
-                values[2].to_owned(),
-                values[3].to_owned(),
-                values[4].to_owned(),
-            ));
-        } else if !values.is_empty() {
-            return Err(Error::InvalidTransition(format!(
-                "Invalid transition format: expected 5 parts, found {}",
-                values.len()
-            )));
+        let line_without_comment = line.split_once(COMMENT_PREFIX).map_or(line, |(code, _)| code).trim();
+        let make_err = || {
+            Error::InvalidTransition(format!(
+                concat!(
+                    "Invalid transition: {}. ",
+                    "Must be in the format (currentState, currentSymbol, newState, newSymbol, moveDirection)"
+                ),
+                line_without_comment
+            ))
+        };
+        let mut values = line_without_comment.split(' ');
+        let item = (
+            values.next().ok_or_else(make_err)?,
+            values.next().ok_or_else(make_err)?,
+            values.next().ok_or_else(make_err)?,
+            values.next().ok_or_else(make_err)?,
+            values.next().ok_or_else(make_err)?,
+        );
+        if values.next().is_none() {
+            Ok(item)
+        } else {
+            Err(make_err())
         }
-    }
-    Ok(transitions_list)
+    })
 }
 
 #[cfg(test)]
@@ -474,56 +476,26 @@ mod tests {
 
     #[test]
     fn test_totally_unknown_symbol_in_tape() {
-        let transitions = vec![(
-            "INIT".to_string(),
-            "a".to_string(),
-            "HALT".to_string(),
-            "b".to_string(),
-            "R".to_string(),
-        )];
-        let mut machine = LogicMill::new(&transitions, "INIT", "HALT", '_').unwrap();
-        let result = machine.run("x".to_string(), 100, false);
+        let rules = "INIT a HALT b R";
+        let mut machine = LogicMill::new(rules, "INIT", "HALT", '_').unwrap();
+        let result = machine.run("x", 100, false);
         assert!(matches!(result, Err(Error::MissingTransition(_))));
     }
 
     #[test]
     fn test_even_odd() {
-        let transitions = vec![
-            (
-                "INIT".to_string(),
-                "_".to_string(),
-                "HALT".to_string(),
-                "E".to_string(),
-                "R".to_string(),
-            ),
-            (
-                "INIT".to_string(),
-                "|".to_string(),
-                "ODD".to_string(),
-                "_".to_string(),
-                "R".to_string(),
-            ),
-            (
-                "ODD".to_string(),
-                "_".to_string(),
-                "HALT".to_string(),
-                "O".to_string(),
-                "R".to_string(),
-            ),
-            (
-                "ODD".to_string(),
-                "|".to_string(),
-                "INIT".to_string(),
-                "_".to_string(),
-                "R".to_string(),
-            ),
-        ];
+        let rules = concat!(
+            "INIT | ODD _ R\n",
+            "INIT _ HALT E R\n",
+            "ODD | INIT _ R\n",
+            "ODD _ HALT O R\n",
+        );
 
         for n in 0..50 {
             let input_tape = "|".repeat(n);
             let expected_output = if n % 2 == 0 { "E" } else { "O" };
-            let mut machine = LogicMill::new(&transitions, "INIT", "HALT", '_').unwrap();
-            let (output_tape, steps) = machine.run(input_tape, 1000, false).unwrap();
+            let mut machine = LogicMill::new(rules, "INIT", "HALT", '_').unwrap();
+            let (output_tape, steps) = machine.run(&input_tape, 1000, false).unwrap();
             assert_eq!(output_tape, expected_output);
             assert!(steps > 0);
         }
@@ -531,33 +503,21 @@ mod tests {
 
     #[test]
     fn test_no_initial_state() {
-        let transitions = vec![(
-            "START".to_string(),
-            "a".to_string(),
-            "HALT".to_string(),
-            "b".to_string(),
-            "R".to_string(),
-        )];
-        let result = LogicMill::new(&transitions, "INIT", "HALT", '_');
+        let rules = "START a HALT b R";
+        let result = LogicMill::new(rules, "INIT", "HALT", '_');
         assert!(matches!(result, Err(Error::InvalidTransition(_))));
 
-        let result = LogicMill::new(&[], "INIT", "HALT", '_');
+        let result = LogicMill::new("", "INIT", "HALT", '_');
         assert!(matches!(result, Err(Error::InvalidTransition(_))));
     }
 
     #[test]
     fn test_no_halt_state() {
-        let transitions = vec![(
-            "INIT".to_string(),
-            "a".to_string(),
-            "END".to_string(),
-            "b".to_string(),
-            "R".to_string(),
-        )];
-        let result = LogicMill::new(&transitions, "INIT", "HALT", '_');
+        let rules = "INIT a END b R";
+        let result = LogicMill::new(rules, "INIT", "HALT", '_');
         assert!(matches!(result, Err(Error::InvalidTransition(_))));
 
-        let result = LogicMill::new(&[], "INIT", "HALT", '_');
+        let result = LogicMill::new("", "INIT", "HALT", '_');
         assert!(matches!(result, Err(Error::InvalidTransition(_))));
     }
 
@@ -569,58 +529,18 @@ mod tests {
             INIT b INIT a L
             // One more comment
         "#;
-        let transitions = parse_transition_rules(rules_str).unwrap();
+        let transitions = parse_rules(rules_str).collect::<Result<Vec<_>, Error>>().unwrap();
         assert_eq!(transitions.len(), 2);
-        assert_eq!(
-            transitions[0],
-            (
-                "INIT".to_string(),
-                "a".to_string(),
-                "HALT".to_string(),
-                "b".to_string(),
-                "R".to_string()
-            )
-        );
-        assert_eq!(
-            transitions[1],
-            (
-                "INIT".to_string(),
-                "b".to_string(),
-                "INIT".to_string(),
-                "a".to_string(),
-                "L".to_string()
-            )
-        );
+        assert_eq!(transitions[0], ("INIT", "a", "HALT", "b", "R"));
+        assert_eq!(transitions[1], ("INIT", "b", "INIT", "a", "L"));
     }
 
     #[test]
     fn test_unused_rules() {
-        let transitions = vec![
-            (
-                "INIT".to_string(),
-                "a".to_string(),
-                "STATE1".to_string(),
-                "b".to_string(),
-                "R".to_string(),
-            ),
-            (
-                "STATE1".to_string(),
-                "a".to_string(),
-                "HALT".to_string(),
-                "c".to_string(),
-                "R".to_string(),
-            ),
-            (
-                "STATE1".to_string(),
-                "c".to_string(),
-                "HALT".to_string(),
-                "d".to_string(),
-                "R".to_string(),
-            ),
-        ];
-        let mut machine = LogicMill::new(&transitions, "INIT", "HALT", '_').unwrap();
+        let rules = concat!("INIT a STATE1 b R\n", "STATE1 a HALT c R\n", "STATE1 c HALT d R\n",);
+        let mut machine = LogicMill::new(rules, "INIT", "HALT", '_').unwrap();
         eprintln!("{machine:?}");
-        let (output_tape, steps) = machine.run("aa_".to_string(), 100, false).unwrap();
+        let (output_tape, steps) = machine.run("aa_", 100, false).unwrap();
         assert_eq!(output_tape, "bc");
         assert_eq!(steps, 2);
 
@@ -1724,14 +1644,14 @@ NEXT X NEXT X L
 NEXT _ INIT _ R
 NEXT | NEXT | L
         "#;
-        let mut machine = LogicMill::new(&parse_transition_rules(rules).unwrap(), "INIT", "HALT", '_').unwrap();
+        let mut machine = LogicMill::new(rules, "INIT", "HALT", '_').unwrap();
         eprintln!("{machine:#?}");
         for n in 1..=3999 {
             let roman = to_roman(n);
             if n == 5 {
                 eprintln!("{n} -> {roman}");
             }
-            machine.run(roman, 20_000_000, false).unwrap();
+            machine.run(&roman, 20_000_000, false).unwrap();
         }
         assert_eq!(machine.unused_rules(), Vec::new());
     }
@@ -1739,9 +1659,9 @@ NEXT | NEXT | L
     #[test]
     fn test_state_without_rules() {
         let rules = include_str!("testcase_rules/unhandled_symbol.txt");
-        let mut machine = LogicMill::new(&parse_transition_rules(rules).unwrap(), "INIT", "HALT", '_').unwrap();
+        let mut machine = LogicMill::new(rules, "INIT", "HALT", '_').unwrap();
         assert_eq!(
-            machine.run("I".to_string(), 10, false),
+            machine.run("I", 10, false),
             Err(Error::MissingTransition("No transitions for state SAW_1".to_string()))
         );
     }

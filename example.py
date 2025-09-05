@@ -2,7 +2,6 @@ import time
 import pickle
 from logic_mill_rs import (
     LogicMill,
-    parse_transition_rules,
     InvalidTransitionError,
     MissingTransitionError,
 )
@@ -24,12 +23,8 @@ CLEANUP  _       HALT       _           L
 def main():
     """Demonstrates the use of the LogicMill Rust module."""
     try:
-        print("--- Parsing transition rules ---")
-        transitions = parse_transition_rules(unary_adder_rules)
-        print(f"Parsed {len(transitions)} rules successfully.")
-
         print("\n--- Initializing Logic Mill ---")
-        tm = LogicMill(transitions)
+        tm = LogicMill(unary_adder_rules)
         p = pickle.dumps(tm)
         print("LogicMill serialized: ", p)
         tm = pickle.loads(p)

@@ -4,7 +4,7 @@ use std::hint::black_box;
 use criterion::*;
 use pyo3::prelude::*;
 
-use logic_mill_rs::core::{LogicMill as RustLogicMill, parse_transition_rules as rust_parse_rules};
+use logic_mill_rs::core::LogicMill as RustLogicMill;
 
 fn sqrt_inputs() -> impl Iterator<Item = String> {
     (1..=120).step_by(10).map(|n| "|".repeat(n * n))
@@ -29,8 +29,7 @@ fn roman_inputs() -> impl Iterator<Item = String> {
 }
 
 fn run_rust_benchmark(c: &mut Criterion) {
-    let transitions = rust_parse_rules(include_str!("sqrt_rules.txt")).unwrap();
-    let mut tm = RustLogicMill::new(&transitions, "INIT", "HALT", '_').unwrap();
+    let mut tm = RustLogicMill::new(include_str!("sqrt_rules.txt"), "INIT", "HALT", '_').unwrap();
 
     {
         let mut new_g = c.benchmark_group("rust/new");
@@ -39,27 +38,11 @@ fn run_rust_benchmark(c: &mut Criterion) {
             ("sqrt", include_str!("sqrt_rules.txt")),
             ("roman", include_str!("roman_rules.txt")),
         ] {
-            let transitions = rust_parse_rules(input).unwrap();
-            new_g.throughput(Throughput::Elements(transitions.len() as u64));
-            new_g.bench_with_input(BenchmarkId::from_parameter(name), &transitions, |b, transitions| {
+            new_g.throughput(Throughput::Elements(input.lines().count() as u64));
+            new_g.bench_with_input(BenchmarkId::from_parameter(name), &input, |b, rules| {
                 b.iter(|| {
-                    let tm = RustLogicMill::new(transitions, "INIT", "HALT", '_').unwrap();
+                    let tm = RustLogicMill::new(black_box(rules), "INIT", "HALT", '_').unwrap();
                     black_box(tm);
-                })
-            });
-        }
-    }
-    {
-        let mut parse_g = c.benchmark_group("rust/parse");
-        for (name, input) in [
-            ("sqrt", include_str!("sqrt_rules.txt")),
-            ("roman", include_str!("roman_rules.txt")),
-        ] {
-            parse_g.throughput(Throughput::Elements(input.lines().count() as u64));
-            parse_g.bench_with_input(BenchmarkId::from_parameter(name), &input, |b, input| {
-                b.iter(|| {
-                    let transitions = rust_parse_rules(black_box(input)).unwrap();
-                    black_box(transitions);
                 })
             });
         }
@@ -71,24 +54,21 @@ fn run_rust_benchmark(c: &mut Criterion) {
             g.throughput(Throughput::Elements(input.len() as u64));
             g.bench_with_input(BenchmarkId::from_parameter(input.len()), &input, |b, input| {
                 b.iter(|| {
-                    tm.run(black_box(input.to_string()), black_box(20_000_000), false)
-                        .unwrap();
+                    tm.run(black_box(input), black_box(20_000_000), false).unwrap();
                 })
             });
         }
     }
 
     {
-        let transitions = rust_parse_rules(include_str!("roman_rules.txt")).unwrap();
-        let mut tm = RustLogicMill::new(&transitions, "INIT", "HALT", '_').unwrap();
+        let mut tm = RustLogicMill::new(include_str!("roman_rules.txt"), "INIT", "HALT", '_').unwrap();
 
         let mut g = c.benchmark_group("rust/roman");
         for input in roman_inputs() {
             g.throughput(Throughput::Elements(input.len() as u64));
             g.bench_with_input(BenchmarkId::from_parameter(&input), &input, |b, input| {
                 b.iter(|| {
-                    tm.run(black_box(input.to_string()), black_box(20_000_000), false)
-                        .unwrap();
+                    tm.run(black_box(input), black_box(20_000_000), false).unwrap();
                 })
             });
         }
