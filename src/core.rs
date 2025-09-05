@@ -125,10 +125,10 @@ impl LogicMill {
             machine.rules_used[state_id].resize(symbols.len(), false);
         }
 
-        if !machine.transitions[INITIAL_STATE_ID as usize]
-            .iter()
-            .flatten()
-            .any(|_| true)
+        if machine
+            .transitions
+            .get(INITIAL_STATE_ID as usize)
+            .is_none_or(|state_map| state_map.iter().flatten().next().is_none())
         {
             return Err(Error::InvalidTransition(format!(
                 "Initial state {initial_state} not found in the transitions"
@@ -519,6 +519,9 @@ mod tests {
         )];
         let result = LogicMill::new(transitions, "INIT", "HALT", '_');
         assert!(matches!(result, Err(Error::InvalidTransition(_))));
+
+        let result = LogicMill::new(vec![], "INIT", "HALT", '_');
+        assert!(matches!(result, Err(Error::InvalidTransition(_))));
     }
 
     #[test]
@@ -531,6 +534,9 @@ mod tests {
             "R".to_string(),
         )];
         let result = LogicMill::new(transitions, "INIT", "HALT", '_');
+        assert!(matches!(result, Err(Error::InvalidTransition(_))));
+
+        let result = LogicMill::new(vec![], "INIT", "HALT", '_');
         assert!(matches!(result, Err(Error::InvalidTransition(_))));
     }
 
