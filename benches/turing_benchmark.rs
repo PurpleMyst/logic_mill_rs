@@ -4,7 +4,7 @@ use std::hint::black_box;
 use criterion::*;
 use pyo3::prelude::*;
 
-use logic_mill_rs::core::LogicMill as RustLogicMill;
+use logic_mill_rs::core::{LogicMill as RustLogicMill, dummy_yield};
 
 fn sqrt_inputs() -> impl Iterator<Item = String> {
     (1..=120).step_by(10).map(|n| "|".repeat(n * n))
@@ -54,7 +54,8 @@ fn run_rust_benchmark(c: &mut Criterion) {
             g.throughput(Throughput::Elements(input.len() as u64));
             g.bench_with_input(BenchmarkId::from_parameter(input.len()), &input, |b, input| {
                 b.iter(|| {
-                    tm.run(black_box(input), black_box(20_000_000), false).unwrap();
+                    tm.run(black_box(input), black_box(20_000_000), false, dummy_yield)
+                        .unwrap();
                 })
             });
         }
@@ -68,7 +69,8 @@ fn run_rust_benchmark(c: &mut Criterion) {
             g.throughput(Throughput::Elements(input.len() as u64));
             g.bench_with_input(BenchmarkId::from_parameter(&input), &input, |b, input| {
                 b.iter(|| {
-                    tm.run(black_box(input), black_box(20_000_000), false).unwrap();
+                    tm.run(black_box(input), black_box(20_000_000), false, dummy_yield)
+                        .unwrap();
                 })
             });
         }

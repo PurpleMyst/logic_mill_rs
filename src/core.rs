@@ -23,7 +23,7 @@ impl<'a> From<&'a str> for MoveDirection {
 }
 
 /// Custom error type for the Turing machine.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum Error {
     /// An invalid transition was encountered.
     InvalidTransition(String),
@@ -36,6 +36,15 @@ pub enum Error {
 
     /// The maximum number of steps has been reached.
     MaxStepsReached(u64),
+
+    /// There's been an error coming from Python.
+    PyErr(pyo3::PyErr),
+}
+
+impl From<pyo3::PyErr> for Error {
+    fn from(err: pyo3::PyErr) -> Self {
+        Error::PyErr(err)
+    }
 }
 
 impl std::fmt::Display for Error {
@@ -45,6 +54,7 @@ impl std::fmt::Display for Error {
             Error::MissingTransition(s) => f.pad(s),
             Error::InvalidSymbol(s) => f.pad(s),
             Error::MaxStepsReached(n) => write!(f, "Max steps reached: {n}"),
+            Error::PyErr(e) => write!(f, "Python error: {}", e),
         }
     }
 }
@@ -317,7 +327,17 @@ impl LogicMill {
         println!("{}^", " ".repeat(window as usize));
     }
 
-    pub fn run(&mut self, input_tape: &str, max_steps: u64, verbose: bool) -> Result<(String, u64), Error> {
+    pub fn run<Y, E>(
+        &mut self,
+        input_tape: &str,
+        max_steps: u64,
+        verbose: bool,
+        mut do_yield: Y,
+    ) -> Result<(String, u64), Error>
+    where
+        Y: FnMut() -> Result<(), E>,
+        Error: From<E>,
+    {
         self.set_tape(input_tape)?;
         if verbose {
             self.print_tape();
@@ -326,12 +346,17 @@ impl LogicMill {
             if self.current_state == HALT_STATE_ID {
                 if verbose {
                     println!("HALTED after {steps_count} steps");
+                    do_yield()?;
                 }
                 return Ok((self.render_tape(), steps_count));
             }
             self.step()?;
             if verbose {
                 self.print_tape();
+            }
+            if steps_count & 0x7FFF == 0 {
+                // Yield every 32768 steps
+                do_yield()?;
             }
         }
         Err(Error::MaxStepsReached(max_steps))
@@ -442,32 +467,41 @@ impl LogicMill {
 /// Parses a string into a list of transition rules.
 fn parse_rules(transition_rules_str: &str) -> impl Iterator<Item = Result<Transition<'_>, Error>> {
     const COMMENT_PREFIX: &str = "//";
-    transition_rules_str.lines().map(|raw_line| {
-        let line = raw_line.trim();
-        let line_without_comment = line.split_once(COMMENT_PREFIX).map_or(line, |(code, _)| code).trim();
-        let make_err = || {
-            Error::InvalidTransition(format!(
-                concat!(
-                    "Invalid transition: {}. ",
-                    "Must be in the format (currentState, currentSymbol, newState, newSymbol, moveDirection)"
-                ),
-                line_without_comment
-            ))
-        };
-        let mut values = line_without_comment.split(' ');
-        let item = (
-            values.next().ok_or_else(make_err)?,
-            values.next().ok_or_else(make_err)?,
-            values.next().ok_or_else(make_err)?,
-            values.next().ok_or_else(make_err)?,
-            values.next().ok_or_else(make_err)?,
-        );
-        if values.next().is_none() {
-            Ok(item)
-        } else {
-            Err(make_err())
-        }
-    })
+    transition_rules_str
+        .lines()
+        .filter_map(|raw_line| {
+            let line = raw_line.trim();
+            let line_without_comment = line.split_once(COMMENT_PREFIX).map_or(line, |(code, _)| code).trim();
+            Some(line_without_comment).filter(|line| !line.is_empty())
+        })
+        .map(|line_without_comment| {
+            let make_err = || {
+                Error::InvalidTransition(format!(
+                    concat!(
+                        "Invalid transition: {}. ",
+                        "Must be in the format (currentState, currentSymbol, newState, newSymbol, moveDirection)"
+                    ),
+                    line_without_comment
+                ))
+            };
+            let mut values = line_without_comment.split(' ');
+            let item = (
+                values.next().ok_or_else(make_err)?,
+                values.next().ok_or_else(make_err)?,
+                values.next().ok_or_else(make_err)?,
+                values.next().ok_or_else(make_err)?,
+                values.next().ok_or_else(make_err)?,
+            );
+            if values.next().is_none() {
+                Ok(item)
+            } else {
+                Err(make_err())
+            }
+        })
+}
+
+pub fn dummy_yield() -> Result<(), Error> {
+    Ok(())
 }
 
 #[cfg(test)]
@@ -478,7 +512,7 @@ mod tests {
     fn test_totally_unknown_symbol_in_tape() {
         let rules = "INIT a HALT b R";
         let mut machine = LogicMill::new(rules, "INIT", "HALT", '_').unwrap();
-        let result = machine.run("x", 100, false);
+        let result = machine.run("x", 100, false, dummy_yield);
         assert!(matches!(result, Err(Error::MissingTransition(_))));
     }
 
@@ -495,7 +529,7 @@ mod tests {
             let input_tape = "|".repeat(n);
             let expected_output = if n % 2 == 0 { "E" } else { "O" };
             let mut machine = LogicMill::new(rules, "INIT", "HALT", '_').unwrap();
-            let (output_tape, steps) = machine.run(&input_tape, 1000, false).unwrap();
+            let (output_tape, steps) = machine.run(&input_tape, 1000, false, dummy_yield).unwrap();
             assert_eq!(output_tape, expected_output);
             assert!(steps > 0);
         }
@@ -540,7 +574,7 @@ mod tests {
         let rules = concat!("INIT a STATE1 b R\n", "STATE1 a HALT c R\n", "STATE1 c HALT d R\n",);
         let mut machine = LogicMill::new(rules, "INIT", "HALT", '_').unwrap();
         eprintln!("{machine:?}");
-        let (output_tape, steps) = machine.run("aa_", 100, false).unwrap();
+        let (output_tape, steps) = machine.run("aa_", 100, false, dummy_yield).unwrap();
         assert_eq!(output_tape, "bc");
         assert_eq!(steps, 2);
 
@@ -1651,7 +1685,7 @@ NEXT | NEXT | L
             if n == 5 {
                 eprintln!("{n} -> {roman}");
             }
-            machine.run(&roman, 20_000_000, false).unwrap();
+            machine.run(&roman, 20_000_000, false, dummy_yield).unwrap();
         }
         assert_eq!(machine.unused_rules(), Vec::new());
     }
@@ -1660,9 +1694,11 @@ NEXT | NEXT | L
     fn test_state_without_rules() {
         let rules = include_str!("testcase_rules/unhandled_symbol.txt");
         let mut machine = LogicMill::new(rules, "INIT", "HALT", '_').unwrap();
-        assert_eq!(
-            machine.run("I", 10, false),
-            Err(Error::MissingTransition("No transitions for state SAW_1".to_string()))
-        );
+        match machine.run("I", 10, false, dummy_yield) {
+            Err(Error::MissingTransition(s)) => {
+                assert_eq!(s, "No transitions for state SAW_1".to_string())
+            }
+            e => panic!("Expected MissingTransition error, got {e:?}"),
+        }
     }
 }

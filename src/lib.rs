@@ -29,7 +29,7 @@ impl LogicMill {
         blank_symbol = '_'
     ))]
     pub fn new(rules: &str, initial_state: &str, halt_state: &str, blank_symbol: char) -> PyResult<Self> {
-        let machine = core::LogicMill::new(rules, initial_state, halt_state, blank_symbol).map_err(to_py_err)?;
+        let machine = core::LogicMill::new(rules, initial_state, halt_state, blank_symbol)?;
         Ok(LogicMill { machine })
     }
 
@@ -37,8 +37,14 @@ impl LogicMill {
     ///
     /// Returns a tuple containing the final tape content and the number of steps taken.
     #[pyo3(signature = (input_tape, max_steps = 2_000_000, *, verbose = false))]
-    pub fn run(&mut self, input_tape: &str, max_steps: u64, verbose: bool) -> PyResult<(String, u64)> {
-        self.machine.run(input_tape, max_steps, verbose).map_err(to_py_err)
+    pub fn run(&mut self, py: Python<'_>, input_tape: &str, max_steps: u64, verbose: bool) -> PyResult<(String, u64)> {
+        py.detach(|| {
+            self.machine
+                .run(input_tape, max_steps, verbose, || {
+                    Python::attach(|py| py.check_signals())
+                })
+                .map_err(Into::into)
+        })
     }
 
     /// Return a list of unused transition rules.
@@ -88,11 +94,14 @@ fn logic_mill_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 /// Helper function to convert core::Error to a PyErr.
-fn to_py_err(err: core::Error) -> PyErr {
-    match err {
-        core::Error::InvalidTransition(s) => InvalidTransitionError::new_err(s),
-        core::Error::MissingTransition(s) => MissingTransitionError::new_err(s),
-        core::Error::InvalidSymbol(s) => InvalidSymbolError::new_err(s),
-        core::Error::MaxStepsReached(n) => PyRuntimeError::new_err(format!("Max steps reached: {n}")),
+impl From<core::Error> for PyErr {
+    fn from(err: core::Error) -> PyErr {
+        match err {
+            core::Error::InvalidTransition(s) => InvalidTransitionError::new_err(s),
+            core::Error::MissingTransition(s) => MissingTransitionError::new_err(s),
+            core::Error::InvalidSymbol(s) => InvalidSymbolError::new_err(s),
+            core::Error::MaxStepsReached(n) => PyRuntimeError::new_err(format!("Max steps reached: {n}")),
+            core::Error::PyErr(e) => e,
+        }
     }
 }
